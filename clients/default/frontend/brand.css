@@ -1,0 +1,8 @@
+/*
+ * Neutral demonstration brand tokens. Unlayered, so they override the product
+ * defaults in src/frontend/src/app/theme.css.
+ */
+:root {
+  /* Product lockup marker and active-navigation marker only */
+  --color-brand-marker: #3d5a80;
+}

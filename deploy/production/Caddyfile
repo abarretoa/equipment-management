@@ -1,0 +1,54 @@
+# Equipment Management — public entry point.
+#
+# APP_DOMAIN is the public host name, e.g. equipment.example.com (set in .env).
+# With a real host name Caddy obtains and renews the TLS certificate by itself
+# and answers every plain-HTTP request with a redirect to HTTPS; nothing else
+# in the stack does that redirect.
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# The largest legitimate request is an equipment registration or a return
+	# receipt with its photographs: the API accepts up to 60 MB there.
+	request_body {
+		max_size 70MB
+	}
+
+	# --- API -----------------------------------------------------------------
+	# Caddy passes the original Host and sets X-Forwarded-For / -Proto / -Host
+	# itself. It discards any X-Forwarded-* a client sends, because no upstream
+	# proxy is trusted here. The API in turn trusts these headers only from
+	# this container's address (ForwardedHeaders__KnownProxies__0 in compose.yml).
+	@api path /api/* /health/*
+	handle @api {
+		reverse_proxy api:8080 {
+			header_down -Server
+		}
+	}
+
+	# --- Frontend ------------------------------------------------------------
+	handle {
+		root * /srv
+
+		header {
+			Strict-Transport-Security "max-age=31536000"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			-Server
+		}
+
+		# Build output under /assets carries a content hash in its file name;
+		# everything else (index.html above all) must be revalidated so a new
+		# release is picked up immediately.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		@unhashed not path /assets/*
+		header @unhashed Cache-Control "no-cache"
+
+		# Single-page application: any path that is not a file is a client-side
+		# route and gets the application shell.
+		try_files {path} /index.html
+		file_server
+	}
+}

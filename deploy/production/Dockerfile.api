@@ -1,0 +1,89 @@
+# syntax=docker/dockerfile:1
+#
+# Equipment Management — API image and migration image.
+# Build context: the repository root (see compose.yml).
+#
+#   target "api"      the application (default target)
+#   target "migrate"  applies the EF Core migrations of this same source, then exits
+#
+# Neither image contains the source tree, the .NET SDK or any credential.
+
+ARG DOTNET_VERSION=10.0
+
+# --- Build -------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build
+WORKDIR /src
+
+# The client profile to compile in (clients/<profile>/, docs/WHITE_LABEL.md).
+# Empty: clients/active-profile.txt when present, otherwise "default".
+ARG CLIENT_PROFILE=
+
+COPY Directory.Build.props ./
+COPY src/backend/ src/backend/
+
+RUN dotnet restore src/backend/EquipmentManagement.Api/EquipmentManagement.Api.csproj
+
+COPY clients/ clients/
+
+# appsettings.Development.json holds local-development defaults only; it has no
+# place in a production image.
+RUN dotnet publish src/backend/EquipmentManagement.Api/EquipmentManagement.Api.csproj \
+        --configuration Release --no-restore --output /out/api \
+    && rm -f /out/api/appsettings.Development.json
+
+# --- Migration bundle --------------------------------------------------------
+# A single executable holding every migration of this source revision. Pinned
+# to the EF Core version the application references.
+FROM build AS migrations-build
+ARG CLIENT_PROFILE=
+ARG EF_TOOL_VERSION=10.0.11
+RUN dotnet tool install dotnet-ef --version ${EF_TOOL_VERSION} --tool-path /tools
+RUN /tools/dotnet-ef migrations bundle \
+        --project src/backend/EquipmentManagement.Infrastructure \
+        --startup-project src/backend/EquipmentManagement.Api \
+        --configuration Release \
+        --output /out/efbundle
+
+# --- Shared runtime base -----------------------------------------------------
+# curl: container health check. libgssapi-krb5-2: Npgsql probes for it at
+# startup and logs an error line when it is missing.
+FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime-base
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Migration image ---------------------------------------------------------
+# Runs once per deployment, explicitly:  docker compose run --rm migrate
+# Exits non-zero if the connection string is missing or any migration fails.
+# Safe to run again: an up-to-date database is left untouched.
+FROM runtime-base AS migrate
+WORKDIR /app
+COPY --from=migrations-build /out/efbundle ./efbundle
+USER $APP_UID
+ENTRYPOINT ["/bin/sh", "-c", "if [ -z \"$ConnectionStrings__Default\" ]; then echo 'ConnectionStrings__Default is not set; refusing to run migrations.' >&2; exit 1; fi; exec /app/efbundle --connection \"$ConnectionStrings__Default\""]
+
+# --- API image ---------------------------------------------------------------
+FROM runtime-base AS api
+WORKDIR /app
+COPY --from=build /out/api ./
+
+# The two directories the application writes to. Created here and owned by the
+# non-root runtime user so that a brand-new named volume mounted on either path
+# starts out writable (Docker copies the ownership of the mount point into an
+# empty named volume). A bind mount does not get this: chown it to 1654:1654.
+RUN mkdir -p /data/private-storage /data/dataprotection-keys \
+    && chown -R $APP_UID:$APP_UID /data \
+    && chmod 700 /data/private-storage /data/dataprotection-keys
+
+ENV ASPNETCORE_ENVIRONMENT=Production \
+    ASPNETCORE_HTTP_PORTS=8080 \
+    PrivateStorage__RootPath=/data/private-storage \
+    DataProtection__KeyRingPath=/data/dataprotection-keys
+
+USER $APP_UID
+EXPOSE 8080
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=4 \
+    CMD curl --fail --silent --show-error --output /dev/null http://localhost:8080/health/ready || exit 1
+
+ENTRYPOINT ["dotnet", "EquipmentManagement.Api.dll"]

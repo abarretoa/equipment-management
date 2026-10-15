@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/backend/">
+    <Project Path="src/backend/EquipmentManagement.Api/EquipmentManagement.Api.csproj" />
+    <Project Path="src/backend/EquipmentManagement.Application/EquipmentManagement.Application.csproj" />
+    <Project Path="src/backend/EquipmentManagement.Domain/EquipmentManagement.Domain.csproj" />
+    <Project Path="src/backend/EquipmentManagement.Infrastructure/EquipmentManagement.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EquipmentManagement.IntegrationTests/EquipmentManagement.IntegrationTests.csproj" />
+    <Project Path="tests/EquipmentManagement.UnitTests/EquipmentManagement.UnitTests.csproj" />
+  </Folder>
+</Solution>

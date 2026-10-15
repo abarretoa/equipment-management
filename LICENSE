@@ -1,0 +1,73 @@
+Equipment Management — Proprietary Source-Viewing License
+
+Copyright (c) 2026 Alessandro Barreto
+All Rights Reserved.
+
+This is not an open-source license. It is not approved by, and is not
+submitted to, the Open Source Initiative. The software in this repository
+is not free software.
+
+1. Permitted: viewing and evaluation
+
+   The source code in this repository is made publicly viewable solely for
+   portfolio, technical evaluation and demonstration purposes. You may view
+   and read it, and evaluate it as an example of software-engineering work,
+   only through the hosting platform on which it is published. You may make
+   only the incidental copies that the platform's ordinary viewing functions
+   require (for example, the copy your browser displays), as permitted by
+   that platform's terms of service.
+
+2. Not permitted without prior written permission
+
+   No license or other right is granted to use, copy, modify, merge,
+   publish, distribute, redistribute, sublicense, sell, rent, lease, host,
+   deploy, operate, provide as a service, or create derivative works from
+   this software, in whole or in part. In particular, no license is granted
+   for:
+
+   (a) production use of any kind;
+   (b) commercial use of any kind;
+   (c) modification;
+   (d) distribution or redistribution;
+   (e) sublicensing;
+   (f) hosting or deployment, including as a hosted or managed service;
+   (g) sale;
+   (h) creating derivative works or derivative products.
+
+   Any such use requires explicit prior written permission from Alessandro
+   Barreto.
+
+3. No implied license
+
+   Making this repository publicly visible does not grant any license or
+   right, express or implied, by estoppel or otherwise, under any copyright,
+   patent, trademark or other right of the copyright owner. All rights not
+   expressly granted in section 1 are reserved.
+
+4. Demonstration content
+
+   The demonstration Responsibility Term wording, names, organisation
+   ("Acme Consulting") and other sample data in this repository are fictional
+   and illustrative only. The wording has not been legally reviewed and is
+   not legal advice.
+
+5. Third-party components
+
+   Third-party components included in or used by this repository (for
+   example the Liberation Sans and Geist fonts under the SIL Open Font
+   License 1.1, and the packages listed in the project files) remain subject
+   to their own licenses, which this license does not change.
+
+6. No warranty and limitation of liability
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE COPYRIGHT OWNER BE LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
+   OR ITS USE.
+
+To request permission for any use beyond section 1, contact the copyright
+owner, Alessandro Barreto.
+
+Note: this license text has not received formal legal review.

@@ -1,0 +1,47 @@
+<Project>
+
+  <!--
+    Shared MSBuild settings for every backend project (src/backend/** and tests/**).
+    Keeps compiler strictness and target framework consistent instead of repeating
+    it per .csproj (docs/ARCHITECTURE.md).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+
+    <Deterministic>true</Deterministic>
+    <!--
+      InvariantGlobalization is intentionally NOT enabled: this application serves
+      Portuguese users and will need pt-PT date/number formatting (and later,
+      PDF generation) with real ICU culture data, not the invariant culture.
+    -->
+
+    <NoWarn>$(NoWarn);CA1515</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Client profile (docs/WHITE_LABEL.md): which clients/<profile>/ directory this
+    build embeds. One profile per build and per deployment, never chosen at
+    runtime. First match wins:
+      1. -p:ClientProfile=<profile> on the command line;
+      2. the CLIENT_PROFILE environment variable (Docker build argument);
+      3. the one-line file clients/active-profile.txt, when it exists;
+      4. "default", the neutral demonstration profile.
+  -->
+  <PropertyGroup>
+    <ClientProfile Condition="'$(ClientProfile)' == ''">$(CLIENT_PROFILE)</ClientProfile>
+    <ClientProfile Condition="'$(ClientProfile)' == '' and Exists('$(MSBuildThisFileDirectory)clients/active-profile.txt')">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)clients/active-profile.txt').Trim())</ClientProfile>
+    <ClientProfile Condition="'$(ClientProfile)' == ''">default</ClientProfile>
+    <ClientProfileDir>$(MSBuildThisFileDirectory)clients/$(ClientProfile)/</ClientProfileDir>
+  </PropertyGroup>
+
+</Project>

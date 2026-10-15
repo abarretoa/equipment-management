@@ -1,0 +1,29 @@
+{
+  "logo": null,
+  "accentColor": "#3D5A80",
+  "demonstrationNotice": "Modelo de demonstração: texto ilustrativo, não revisto juridicamente. Cada organização deve fornecer e validar juridicamente o seu próprio Termo de Responsabilidade antes de qualquer utilização real.",
+  "laptop": {
+    "indemnity": {
+      "amount": 500,
+      "amountInWords": "quinhentos euros"
+    },
+    "clauses": [
+      "O computador portátil identificado neste documento é propriedade da organização e é cedido ao utilizador exclusivamente para uso profissional.",
+      "O equipamento deve ser devolvido sempre que a organização o solicite e, em qualquer caso, no fim da relação profissional.",
+      "Em caso de perda, furto ou dano causado por negligência do utilizador, poderá ser pedida uma compensação até {indemnity}, nos termos definidos pela organização.",
+      "Avarias ou problemas devem ser comunicados de imediato, por escrito, para suporte@example.com."
+    ]
+  },
+  "mobilePhone": {
+    "indemnity": {
+      "amount": 150,
+      "amountInWords": "cento e cinquenta euros"
+    },
+    "clauses": [
+      "O telemóvel identificado neste documento é propriedade da organização e é cedido ao utilizador exclusivamente para uso profissional.",
+      "O equipamento deve ser devolvido sempre que a organização o solicite e, em qualquer caso, no fim da relação profissional.",
+      "Em caso de perda, furto ou dano causado por negligência do utilizador, poderá ser pedida uma compensação até {indemnity}, nos termos definidos pela organização.",
+      "Avarias ou problemas devem ser comunicados de imediato, por escrito, para suporte@example.com."
+    ]
+  }
+}

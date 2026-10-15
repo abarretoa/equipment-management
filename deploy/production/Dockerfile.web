@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+#
+# Equipment Management — web image: Caddy serving the production frontend build and
+# reverse-proxying /api and /health to the API. The only public service.
+# Build context: the repository root (see compose.yml).
+
+# --- Frontend build ----------------------------------------------------------
+FROM node:24-alpine AS build
+# The repository layout is kept (src/frontend next to clients/) so the build
+# finds the client profile at ../../clients/<profile>/.
+WORKDIR /repo/src/frontend
+
+# Deterministic install: exactly what package-lock.json records.
+COPY src/frontend/package.json src/frontend/package-lock.json ./
+RUN npm ci
+
+# The client profile to build in (clients/<profile>/, docs/WHITE_LABEL.md).
+# Empty: clients/active-profile.txt when present, otherwise "default".
+ARG CLIENT_PROFILE=
+ENV CLIENT_PROFILE=${CLIENT_PROFILE}
+COPY clients/ /repo/clients/
+COPY src/frontend/ ./
+
+# Same-origin deployment: the bundle calls the API on a relative /api path.
+# Forced empty here so no API URL (and never a localhost one) can be baked in,
+# whatever the build machine's environment holds. Local .env files are also
+# excluded from the build context by .dockerignore.
+ENV VITE_API_BASE_URL=""
+RUN npm run build
+
+# --- Web server --------------------------------------------------------------
+FROM caddy:2-alpine
+COPY deploy/production/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /repo/src/frontend/dist /srv
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=4 \
+    CMD wget --quiet --spider http://127.0.0.1:2019/config/ || exit 1

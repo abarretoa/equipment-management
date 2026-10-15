@@ -1,0 +1,10 @@
+{
+  "id": "default",
+  "productName": "Equipment Management",
+  "shortName": "Acme",
+  "productWord": "Equipment",
+  "organizationName": "Acme Consulting",
+  "dataProtectionApplicationName": "Equipment Management",
+  "mobileCarrierName": null,
+  "isDemonstration": true
+}

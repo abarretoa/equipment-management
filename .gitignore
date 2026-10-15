@@ -1,0 +1,56 @@
+# =====================================================================
+# Environment / secrets — never commit real values
+# =====================================================================
+.env
+.env.local
+.env.*.local
+.env.demo
+*.pfx
+*.pem
+*.key
+
+# =====================================================================
+# .NET / backend
+# =====================================================================
+bin/
+obj/
+*.user
+*.suo
+.vs/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.binlog
+
+# Local-dev private file storage — never committed. Production keeps it on a
+# persistent Docker volume (docs/DEPLOYMENT.md).
+private-storage/
+private-storage-demo/
+
+# =====================================================================
+# Node / frontend
+# =====================================================================
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =====================================================================
+# Editors / OS
+# =====================================================================
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# =====================================================================
+# Test / coverage output
+# =====================================================================
+coverage/
+TestResults/
+*.trx

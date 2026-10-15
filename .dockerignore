@@ -1,0 +1,37 @@
+# Build context for deploy/production/Dockerfile.api and Dockerfile.web (the
+# context is the repository root). Keeps local build output, local data and
+# anything that could hold a secret out of the images.
+
+.git
+.github
+.vscode
+.idea
+.vs
+
+# Local secrets and environment files — never part of an image.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pfx
+**/*.pem
+**/*.key
+
+# Build output and dependencies (rebuilt inside the images).
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/TestResults
+**/coverage
+
+# Local data.
+**/private-storage
+**/private-storage-demo
+
+# Not needed to build either image. A client profile's deploy/ folder holds
+# operator templates only.
+clients/*/deploy
+tests
+docs
+README.md
+docker-compose.yml

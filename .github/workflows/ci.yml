@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Builds and tests the neutral demonstration profile (clients/default). No
+# repository secrets are used: the database is a throwaway service container.
+env:
+  CLIENT_PROFILE: default
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (.NET)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: equipment_management_ci
+          POSTGRES_USER: equipment_management
+          POSTGRES_PASSWORD: equipment_management_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U equipment_management -d equipment_management_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ConnectionStrings__Default: "Host=localhost;Port=5432;Database=equipment_management_ci;Username=equipment_management;Password=equipment_management_ci"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore EquipmentManagement.slnx
+
+      - name: Build
+        run: dotnet build EquipmentManagement.slnx --no-restore --configuration Release
+
+      # Fails clearly if the EF model and the committed migrations have drifted
+      # apart (a model change without `dotnet ef migrations add`).
+      - name: Check for pending model changes without a migration
+        run: |
+          dotnet tool install --global dotnet-ef
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef migrations has-pending-model-changes \
+            --project src/backend/EquipmentManagement.Infrastructure \
+            --startup-project src/backend/EquipmentManagement.Api
+
+      - name: Unit tests
+        run: dotnet test tests/EquipmentManagement.UnitTests/EquipmentManagement.UnitTests.csproj --no-build --configuration Release
+
+      # The suite creates its own temporary database on the service container's
+      # server (ConnectionStrings__Default supplies only the server), applies the
+      # full migration chain to it and drops it afterwards, so it also verifies a
+      # fresh install.
+      - name: Integration tests
+        run: dotnet test tests/EquipmentManagement.IntegrationTests/EquipmentManagement.IntegrationTests.csproj --no-build --configuration Release
+
+      # Informational: continue-on-error so a known, not-yet-patched advisory doesn't
+      # block every unrelated PR, but the finding stays visible in the run's log.
+      # NuGet audit already fails the restore on any advisory (TreatWarningsAsErrors).
+      - name: Dependency vulnerability scan (backend)
+        continue-on-error: true
+        run: dotnet list EquipmentManagement.slnx package --vulnerable --include-transitive
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test -- --run
+
+      - name: Build
+        run: npm run build
+
+      # Informational, same rationale as the backend's vulnerable-package step above.
+      - name: Dependency vulnerability scan (frontend)
+        continue-on-error: true
+        run: npm audit --audit-level=high

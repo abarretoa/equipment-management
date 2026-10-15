@@ -1,0 +1,134 @@
+/*
+ * Design-token layer — Visual System v1 (product defaults). Every reusable
+ * component must reference these custom properties — via the Tailwind
+ * utilities they generate (`bg-primary`, `text-fg-muted`, `border-border`,
+ * `rounded-md`, …) or `var(--color-*)` directly — never a raw hex value.
+ * A client profile rebrands by overriding tokens in its own brand.css and
+ * supplying its brand.ts (clients/<profile>/frontend/, docs/WHITE_LABEL.md).
+ *
+ * v1 is LIGHT ONLY: there is deliberately no prefers-color-scheme override.
+ * The dark ink values below (`rail-*`) are the navigation rail's own fixed
+ * surface, not a dark theme.
+ *
+ * `static` emits every token as a CSS variable even when no utility uses it,
+ * so direct `var(--color-*)` references (e.g. the rail's focus-ring override)
+ * always resolve.
+ *
+ * Spacing intentionally uses Tailwind's own default scale (0.25rem/4px base),
+ * which is the Visual System's 4px base — no override needed there.
+ */
+@theme static {
+  --font-sans:
+    'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  /* Surfaces — the page itself is the white working surface */
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  /* Hover, disabled, skeleton */
+  --color-surface-sunken: #f7f7f8;
+  /* Active filter chip, icon tiles, selected rows */
+  --color-surface-selected: #f2f3f5;
+
+  /* Text */
+  --color-fg: #17181a;
+  --color-fg-muted: #52555b;
+  --color-fg-subtle: #6b6e74;
+  --color-fg-disabled: #8e9197;
+  --color-primary-fg: #ffffff;
+
+  /* Borders — hairlines over shadows */
+  --color-border: #e6e7e9;
+  --color-border-row: #eff0f1;
+  /* Table header rule, popover outline */
+  --color-border-divider: #d9dbdf;
+  /* Secondary buttons, unselected chips */
+  --color-border-control: #c6c8cc;
+  /* Inputs, radios, checkboxes (3.2:1) */
+  --color-border-strong: #8e9197;
+
+  /* Interactive — the primary is ink, never the brand marker colour */
+  --color-primary: #17181a;
+  --color-primary-hover: #2e3035;
+  --color-primary-subtle: #f2f3f5;
+  --color-focus-ring: #17181a;
+
+  /* Navigation rail (fixed dark surface on every viewport) */
+  --color-rail: #17181a;
+  --color-rail-hover: #202226;
+  --color-rail-active: #2a2c31;
+  --color-rail-border: #2a2c30;
+  --color-rail-fg: #b9bcc2;
+  --color-rail-fg-muted: #8e9197;
+  --color-rail-fg-active: #ffffff;
+  --color-rail-focus: #ffffff;
+
+  /* Brand — product lockup marker and active-navigation marker ONLY.
+     Neutral default; each client profile sets its own in brand.css. */
+  --color-brand-marker: #3d5a80;
+
+  /* Semantic status — never the brand marker colour */
+  --color-success: #1a6b43;
+  --color-success-bg: #f1f8f4;
+  --color-success-border: #c5e1d0;
+
+  --color-warning: #8a4b00;
+  --color-warning-bg: #fdf6ea;
+  --color-warning-border: #eed7ae;
+
+  --color-danger: #b42318;
+  --color-danger-hover: #931c13;
+  --color-danger-fg: #a3201a;
+  --color-danger-bg: #fdf3f2;
+  --color-danger-border: #f0c4be;
+
+  --color-info: #1f4b99;
+  --color-info-bg: #f1f5fc;
+  --color-info-border: #c9d7f0;
+
+  --color-neutral: #52555b;
+  --color-neutral-bg: #f2f3f5;
+  --color-neutral-border: #e6e7e9;
+
+  /* Modal scrim: ink at 48% */
+  --color-overlay: rgb(23 24 26 / 0.48);
+
+  /* Radius scale — named, not freehand */
+  --radius-xs: 2px;
+  /* badges, checkboxes, tags */
+  --radius-sm: 3px;
+  /* inputs, buttons, nav items, avatars */
+  --radius-md: 4px;
+  /* panels, popovers, status strip */
+  --radius-lg: 6px;
+  /* dialogs only */
+  --radius-xl: 8px;
+  --radius-full: 999px;
+
+  /* Shadows — reserved for transient overlays only; ordinary surfaces use hairlines */
+  --shadow-sm: 0 1px 2px rgb(23 24 26 / 0.06);
+  --shadow-md: 0 8px 24px rgb(23 24 26 / 0.14);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.28);
+  --shadow-popover: 0 8px 24px rgb(23 24 26 / 0.14);
+  --shadow-dialog: 0 16px 48px rgb(0 0 0 / 0.28);
+
+  /* Motion — used behind `motion-safe:` so reduced-motion users get instant changes */
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-drawer-in: drawer-in 220ms ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+  }
+}

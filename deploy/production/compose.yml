@@ -1,0 +1,135 @@
+# Equipment Management — production stack for one Linux VPS and ONE organisation.
+#
+#   web       Caddy: HTTPS, HTTP->HTTPS redirect, frontend, reverse proxy. The only public service.
+#   api       the application. One instance. Internal network only.
+#   postgres  PostgreSQL 18. Internal network only.
+#   migrate   one-shot database migration; runs only when asked (profile "tools").
+#
+# All secrets and site-specific values come from the .env file next to this
+# file (copy .env.example; .env is git-ignored). See README.md.
+
+# The project name prefixes containers, images and volumes. A client deployment
+# may override it with COMPOSE_PROJECT_NAME in .env (see its client profile).
+name: equipment-management
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-equipment_management}
+      POSTGRES_USER: ${POSTGRES_USER:-equipment_management}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      # postgres:18 keeps its data below /var/lib/postgresql/<major>/docker.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - internal
+    # No "ports": PostgreSQL is never published on the host.
+
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.api
+      target: migrate
+      # Client profile compiled into the image (clients/<profile>/, docs/WHITE_LABEL.md).
+      args:
+        CLIENT_PROFILE: ${CLIENT_PROFILE:-}
+    image: ${COMPOSE_PROJECT_NAME:-equipment-management}-migrate:${APP_VERSION:-local}
+    restart: "no"
+    environment:
+      ConnectionStrings__Default: &connection-string "Host=postgres;Port=5432;Database=${POSTGRES_DB:-equipment_management};Username=${POSTGRES_USER:-equipment_management};Password=${POSTGRES_PASSWORD}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.api
+      target: api
+      # Client profile compiled into the image (clients/<profile>/, docs/WHITE_LABEL.md).
+      args:
+        CLIENT_PROFILE: ${CLIENT_PROFILE:-}
+    image: ${COMPOSE_PROJECT_NAME:-equipment-management}-api:${APP_VERSION:-local}
+    restart: unless-stopped
+    # SMTP, document issuer and (first deployment only) BootstrapAdmin settings.
+    env_file:
+      - .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Default: *connection-string
+      PrivateStorage__RootPath: /data/private-storage
+      DataProtection__KeyRingPath: /data/dataprotection-keys
+      App__PublicBaseUrl: https://${APP_DOMAIN:?Set APP_DOMAIN in .env}
+      # "localhost" is only the container's own health check.
+      AllowedHosts: ${APP_DOMAIN};localhost
+      # Trust X-Forwarded-* from the web container's fixed address, and from nowhere else.
+      ForwardedHeaders__Enabled: "true"
+      ForwardedHeaders__KnownProxies__0: 172.30.84.2
+      # Refuse to start if the image was built with another client profile.
+      ClientProfile__Expected: ${CLIENT_PROFILE:-}
+    volumes:
+      - private-storage:/data/private-storage
+      - dataprotection-keys:/data/dataprotection-keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    # No "ports": the API is reachable only through the web service.
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.web
+      # Client profile compiled into the image (clients/<profile>/, docs/WHITE_LABEL.md).
+      args:
+        CLIENT_PROFILE: ${CLIENT_PROFILE:-}
+    image: ${COMPOSE_PROJECT_NAME:-equipment-management}-web:${APP_VERSION:-local}
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # TLS certificates and their private keys. Losing this volume only makes
+      # Caddy request new certificates.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      internal:
+        # Fixed so the API can name its one trusted proxy. If this subnet
+        # collides with another network on the host, change it here, below and
+        # in ForwardedHeaders__KnownProxies__0 together.
+        ipv4_address: 172.30.84.2
+
+volumes:
+  postgres-data:
+  private-storage:
+  dataprotection-keys:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.30.84.0/24
+          # Addresses handed out automatically (postgres, api, migrate) come
+          # from the upper half, so none of them can ever take the web
+          # service's fixed address.
+          ip_range: 172.30.84.128/25

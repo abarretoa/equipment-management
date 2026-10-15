@@ -1,0 +1,15 @@
+<Project>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\Directory.Build.props" />
+
+  <PropertyGroup>
+    <!--
+      CA1707 (no underscores in identifiers) is suppressed for test projects only:
+      the Method_Scenario_ExpectedResult naming convention used throughout these
+      tests is a standard, widely-documented exception to that rule — test method
+      names are never called by consumers, so the rule's rationale doesn't apply.
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>
