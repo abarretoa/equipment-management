@@ -5,29 +5,12 @@
 > No permission is granted to use, deploy, modify or redistribute it.
 > See [License / Usage](#license--usage).
 
-## Overview
+## About the project
 
-Equipment Management is a secure, white-label equipment lifecycle management
-platform for organisations managing company equipment and consultant custody.
-
-It follows every laptop, mobile phone and generic item from registration to
-retirement:
-
-- delivery to the people who use it;
-- signed Responsibility Terms;
-- returns and inspections;
-- damage, maintenance and retirement.
-
-It keeps an exact record of who holds what, and of the evidence behind every
-step.
-
-The application is operated by an organisation's internal Administration and
-HR staff. The people who receive equipment (Consultants) are domain records,
-not application users. The user interface is in Portuguese (pt-PT).
-
-This repository builds with a neutral demonstration identity, **"Acme
-Consulting"**, which is fictional. All names, addresses, emails and data in
-it are synthetic.
+Equipment Management is a full-stack web application I developed to help companies keep track of their equipment.
+The idea came from the need to organise processes such as assigning laptops and phones to employees, managing returns and keeping track of who is responsible for each device.
+The application brings these processes together in one place, making it easier for HR and Administration teams to manage equipment without relying on spreadsheets or manual records.
+I worked on both the backend and frontend, using C#, ASP.NET Core, React, TypeScript and PostgreSQL.
 
 ### Why the domain is non-trivial
 
@@ -170,6 +153,12 @@ multi-tenancy. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Deployment | Docker Compose, Caddy (automatic HTTPS), one API instance |
 | CI | GitHub Actions workflow: build, tests, EF model drift check, dependency audit |
 
+## Some challenges during development
+One of the main challenges was handling equipment assignments correctly, especially when multiple users try to assign the same device.
+I also worked on generating PDF responsibility documents, managing their versions and making sure previous records remain unchanged.
+Another important part was implementing authentication, user permissions and protecting sensitive files.
+These challenges helped me improve my understanding of backend development, database relationships, application security and how different parts of a full-stack application work together.
+
 ## Security Model
 
 Main controls:
@@ -304,6 +293,16 @@ documents.
 | [docs/WHITE_LABEL.md](docs/WHITE_LABEL.md) | Product Core and client profiles |
 | [docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md) | Every design decision (`ADR-nnn`) in brief, plus the development phases and iterations cited in code comments |
 | [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) | The functional baseline the product was built against, by numbered section |
+
+## About this repository
+
+This is a portfolio version of a project originally developed in a private repository.
+
+I created a separate public repository to share the code without exposing private company information, credentials or real user data.
+
+The application uses a fictional company, Acme Consulting, along with demonstration data.
+
+Since this is a cleaned-up portfolio version, the original development history is not included here. That's why the repository starts with a single commit.
 
 ## License / Usage
 
