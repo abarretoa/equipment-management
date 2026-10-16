@@ -1,3 +1,5 @@
+using System.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -28,6 +30,16 @@ public static class TransactionExtensions
     public static async Task<IDbContextTransaction?> BeginTransactionIfNoneAsync(
         this DatabaseFacade database, CancellationToken cancellationToken = default) =>
         database.CurrentTransaction is null ? await database.BeginTransactionAsync(cancellationToken) : null;
+
+    /// <summary>
+    /// Begins a transaction at <paramref name="isolationLevel"/>, or returns null
+    /// when one is already open on this context. A caller that joins must
+    /// already run at that level (or stricter); the outer owner commits and is
+    /// the one that translates a conflict at its own boundary.
+    /// </summary>
+    public static async Task<IDbContextTransaction?> BeginTransactionIfNoneAsync(
+        this DatabaseFacade database, IsolationLevel isolationLevel, CancellationToken cancellationToken = default) =>
+        database.CurrentTransaction is null ? await database.BeginTransactionAsync(isolationLevel, cancellationToken) : null;
 
     /// <summary>Commits <paramref name="transaction"/> when this caller opened it; a no-op when it joined an outer one.</summary>
     public static Task CommitIfOwnedAsync(this IDbContextTransaction? transaction, CancellationToken cancellationToken = default) =>

@@ -92,7 +92,7 @@ public sealed class EquipmentDispatchService(
             join e in dbContext.Equipment.AsNoTracking() on i.EquipmentId equals e.Id
             join t in dbContext.EquipmentTypes.AsNoTracking() on e.EquipmentTypeId equals t.Id
             where i.EquipmentHandoverId == handoverId
-            select new { e, t }).ToListAsync(cancellationToken);
+            select new { ItemId = i.Id, e, t }).ToListAsync(cancellationToken);
 
         if (items.Count == 0)
         {
@@ -134,6 +134,24 @@ public sealed class EquipmentDispatchService(
         {
             try
             {
+                // The Handover and its items were validated before this
+                // transaction. Re-read here, so an item added or removed (or the
+                // delivery method changed) in between is refused rather than
+                // shipping a stale composition; a composition edit that has
+                // not committed yet conflicts with this snapshot instead.
+                var current = await dbContext.EquipmentHandovers.AsNoTracking().FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
+                if (current is null)
+                {
+                    return ServiceResult.Fail<EquipmentDispatchRecord>(
+                        ServiceErrorCode.Concurrency, "Esta entrega já não está disponível para registar o envio. Atualize a página.");
+                }
+
+                if (current.Status != HandoverStatus.Draft || !HandoverRules.AllowsDispatch(current.DeliveryMethod) ||
+                    await HandoverComposition.HasChangedAsync(dbContext, handoverId, items.Select(x => x.ItemId), cancellationToken))
+                {
+                    return ServiceResult.Fail<EquipmentDispatchRecord>(ServiceErrorCode.Concurrency, HandoverComposition.ConflictMessage);
+                }
+
                 var equipment = await dbContext.Equipment.Where(e => equipmentIds.Contains(e.Id)).ToListAsync(cancellationToken);
                 var unavailable = equipment.Where(e => !EquipmentLifecycleRules.CanDispatch(e.Status)).Select(e => e.AssetTag).Order().ToList();
                 if (unavailable.Count > 0)

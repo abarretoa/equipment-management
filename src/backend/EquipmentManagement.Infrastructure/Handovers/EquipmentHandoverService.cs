@@ -188,47 +188,60 @@ public sealed class EquipmentHandoverService(
     public async Task<ServiceResult<EquipmentHandoverDetailRecord>> SetDeliveryMethodAsync(
         Guid handoverId, HandoverDeliveryMethod deliveryMethod, Guid actorUserId, string actorDisplayName, CancellationToken cancellationToken = default)
     {
-        var handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
-        if (handover is null)
+        EquipmentHandover? handover;
+        try
         {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Handover not found.");
+            // Lock check and write in one Serializable snapshot (see
+            // AddItemAsync): a "Registar envio" committing in between must
+            // never leave a dispatched Handover with a changed method.
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+            handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
+            if (handover is null)
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Handover not found.");
+            }
+
+            if (!HandoverRules.CanModify(handover.Status))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.HandoverNotDraft, "Uma entrega confirmada não pode ser alterada.");
+            }
+
+            if (!Enum.IsDefined(deliveryMethod))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.Validation, "Selecione o método de entrega.");
+            }
+
+            var dispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().FirstOrDefaultAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
+            if (!HandoverRules.CanChangeDeliveryMethod(handover.Status, dispatch is not null))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
+                    ServiceErrorCode.HandoverCompositionLocked, "O envio desta entrega já foi registado; o método de entrega não pode ser alterado.");
+            }
+
+            var previous = handover.DeliveryMethod;
+            if (previous != deliveryMethod)
+            {
+                handover.DeliveryMethod = deliveryMethod;
+                handover.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                await auditService.RecordAsync(new AuditEntry(
+                    AuditActions.EquipmentHandover.DeliveryMethodChanged,
+                    EntityType: "EquipmentHandover",
+                    EntityId: handoverId.ToString(),
+                    ActorUserId: actorUserId,
+                    ActorDisplayNameSnapshot: actorDisplayName,
+                    OldValues: new { DeliveryMethod = previous?.ToString() },
+                    NewValues: new { DeliveryMethod = deliveryMethod.ToString() }), cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
         }
-
-        if (!HandoverRules.CanModify(handover.Status))
+        catch (Exception ex) when (PostgresConflictClassifier.IsSerializationFailure(ex))
         {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.HandoverNotDraft, "Uma entrega confirmada não pode ser alterada.");
-        }
-
-        if (!Enum.IsDefined(deliveryMethod))
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.Validation, "Selecione o método de entrega.");
-        }
-
-        var dispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().FirstOrDefaultAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
-        if (!HandoverRules.CanChangeDeliveryMethod(handover.Status, dispatch is not null))
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
-                ServiceErrorCode.HandoverCompositionLocked, "O envio desta entrega já foi registado; o método de entrega não pode ser alterado.");
-        }
-
-        var previous = handover.DeliveryMethod;
-        if (previous != deliveryMethod)
-        {
-            handover.DeliveryMethod = deliveryMethod;
-            handover.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-
-            await using var transaction = await dbContext.Database.BeginTransactionIfNoneAsync(cancellationToken);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            await auditService.RecordAsync(new AuditEntry(
-                AuditActions.EquipmentHandover.DeliveryMethodChanged,
-                EntityType: "EquipmentHandover",
-                EntityId: handoverId.ToString(),
-                ActorUserId: actorUserId,
-                ActorDisplayNameSnapshot: actorDisplayName,
-                OldValues: new { DeliveryMethod = previous?.ToString() },
-                NewValues: new { DeliveryMethod = deliveryMethod.ToString() }), cancellationToken);
-            await transaction.CommitIfOwnedAsync(cancellationToken);
+            dbContext.ChangeTracker.Clear();
+            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.Concurrency, HandoverComposition.ConflictMessage);
         }
 
         var consultant = await dbContext.Consultants.AsNoTracking().FirstAsync(c => c.Id == handover.ConsultantId, cancellationToken);
@@ -269,65 +282,83 @@ public sealed class EquipmentHandoverService(
     public async Task<ServiceResult<EquipmentHandoverDetailRecord>> AddItemAsync(
         Guid handoverId, Guid equipmentId, Guid actorUserId, string actorDisplayName, CancellationToken cancellationToken = default)
     {
-        var handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
-        if (handover is null)
+        EquipmentHandover? handover;
+        try
         {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Handover not found.");
+            // The composition lock (no active dispatch, still Draft) is read
+            // and the item written in one Serializable snapshot, and the
+            // Handover row itself is written too. A "Registar envio" or
+            // "Confirmar entrega" of this Handover committing in between
+            // therefore either is seen here (locked) or makes this write fail
+            // with a serialization conflict; it can never gain an item after
+            // its own composition read. Equipment is still only checked, never
+            // claimed: the same Available item may sit in several Drafts.
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+            handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
+            if (handover is null)
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Handover not found.");
+            }
+
+            if (!HandoverRules.CanModify(handover.Status))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.HandoverNotDraft, "A finalized handover cannot be modified.");
+            }
+
+            var hasDispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().AnyAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
+            if (!HandoverRules.CanModifyComposition(handover.Status, hasDispatch))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
+                    ServiceErrorCode.HandoverCompositionLocked, "Este Handover já tem um envio registado; a composição não pode ser alterada.");
+            }
+
+            var equipment = await dbContext.Equipment.AsNoTracking().FirstOrDefaultAsync(e => e.Id == equipmentId, cancellationToken);
+            if (equipment is null)
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Equipment not found.");
+            }
+
+            if (!EquipmentLifecycleRules.CanAssign(equipment.Status))
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
+                    ServiceErrorCode.InvalidLifecycleTransition, $"Equipment in status '{equipment.Status}' cannot be handed over.");
+            }
+
+            var alreadyInThisHandover = await dbContext.EquipmentHandoverItems.AsNoTracking()
+                .AnyAsync(i => i.EquipmentHandoverId == handoverId && i.EquipmentId == equipmentId, cancellationToken);
+            if (alreadyInThisHandover)
+            {
+                return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
+                    ServiceErrorCode.EquipmentAlreadyInHandover, "This equipment is already part of this handover.");
+            }
+
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            dbContext.EquipmentHandoverItems.Add(new EquipmentHandoverItem
+            {
+                Id = Guid.NewGuid(),
+                EquipmentHandoverId = handoverId,
+                EquipmentId = equipmentId,
+                CreatedAtUtc = now,
+            });
+            handover.UpdatedAtUtc = now;
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await auditService.RecordAsync(new AuditEntry(
+                AuditActions.EquipmentHandover.ItemAdded,
+                EntityType: "EquipmentHandover",
+                EntityId: handoverId.ToString(),
+                ActorUserId: actorUserId,
+                ActorDisplayNameSnapshot: actorDisplayName,
+                NewValues: new { equipment.AssetTag }), cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
-
-        if (!HandoverRules.CanModify(handover.Status))
+        catch (Exception ex) when (PostgresConflictClassifier.IsSerializationFailure(ex))
         {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.HandoverNotDraft, "A finalized handover cannot be modified.");
+            dbContext.ChangeTracker.Clear();
+            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.Concurrency, HandoverComposition.ConflictMessage);
         }
-
-        var hasDispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().AnyAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
-        if (!HandoverRules.CanModifyComposition(handover.Status, hasDispatch))
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
-                ServiceErrorCode.HandoverCompositionLocked, "Este Handover já tem um envio registado; a composição não pode ser alterada.");
-        }
-
-        var equipment = await dbContext.Equipment.AsNoTracking().FirstOrDefaultAsync(e => e.Id == equipmentId, cancellationToken);
-        if (equipment is null)
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.NotFound, "Equipment not found.");
-        }
-
-        if (!EquipmentLifecycleRules.CanAssign(equipment.Status))
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
-                ServiceErrorCode.InvalidLifecycleTransition, $"Equipment in status '{equipment.Status}' cannot be handed over.");
-        }
-
-        var alreadyInThisHandover = await dbContext.EquipmentHandoverItems.AsNoTracking()
-            .AnyAsync(i => i.EquipmentHandoverId == handoverId && i.EquipmentId == equipmentId, cancellationToken);
-        if (alreadyInThisHandover)
-        {
-            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(
-                ServiceErrorCode.EquipmentAlreadyInHandover, "This equipment is already part of this handover.");
-        }
-
-        var item = new EquipmentHandoverItem
-        {
-            Id = Guid.NewGuid(),
-            EquipmentHandoverId = handoverId,
-            EquipmentId = equipmentId,
-            CreatedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
-        };
-
-        dbContext.EquipmentHandoverItems.Add(item);
-
-        await using var transaction = await dbContext.Database.BeginTransactionIfNoneAsync(cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await auditService.RecordAsync(new AuditEntry(
-            AuditActions.EquipmentHandover.ItemAdded,
-            EntityType: "EquipmentHandover",
-            EntityId: handoverId.ToString(),
-            ActorUserId: actorUserId,
-            ActorDisplayNameSnapshot: actorDisplayName,
-            NewValues: new { equipment.AssetTag }), cancellationToken);
-        await transaction.CommitIfOwnedAsync(cancellationToken);
 
         var consultant = await dbContext.Consultants.AsNoTracking().FirstAsync(c => c.Id == handover.ConsultantId, cancellationToken);
         var items = await BuildItemRecordsAsync(handoverId, cancellationToken);
@@ -337,44 +368,51 @@ public sealed class EquipmentHandoverService(
     public async Task<ServiceResult> RemoveItemAsync(
         Guid handoverId, Guid itemId, Guid actorUserId, string actorDisplayName, CancellationToken cancellationToken = default)
     {
-        var handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
-        if (handover is null)
+        List<string> photoKeys;
+        try
         {
-            return ServiceResult.Fail(ServiceErrorCode.NotFound, "Handover not found.");
-        }
+            // Same Serializable lock-check-and-write discipline as AddItemAsync:
+            // an item is never removed from a Handover whose dispatch or
+            // confirmation already committed with it.
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
 
-        if (!HandoverRules.CanModify(handover.Status))
-        {
-            return ServiceResult.Fail(ServiceErrorCode.HandoverNotDraft, "A finalized handover cannot be modified.");
-        }
+            var handover = await dbContext.EquipmentHandovers.FirstOrDefaultAsync(h => h.Id == handoverId, cancellationToken);
+            if (handover is null)
+            {
+                return ServiceResult.Fail(ServiceErrorCode.NotFound, "Handover not found.");
+            }
 
-        var hasDispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().AnyAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
-        if (!HandoverRules.CanModifyComposition(handover.Status, hasDispatch))
-        {
-            return ServiceResult.Fail(ServiceErrorCode.HandoverCompositionLocked, "Este Handover já tem um envio registado; a composição não pode ser alterada.");
-        }
+            if (!HandoverRules.CanModify(handover.Status))
+            {
+                return ServiceResult.Fail(ServiceErrorCode.HandoverNotDraft, "A finalized handover cannot be modified.");
+            }
 
-        var item = await dbContext.EquipmentHandoverItems.FirstOrDefaultAsync(i => i.Id == itemId && i.EquipmentHandoverId == handoverId, cancellationToken);
-        if (item is null)
-        {
-            return ServiceResult.Fail(ServiceErrorCode.NotFound, "Item not found.");
-        }
+            var hasDispatch = await dbContext.EquipmentDispatches.AsNoTracking().Active().AnyAsync(d => d.EquipmentHandoverId == handoverId, cancellationToken);
+            if (!HandoverRules.CanModifyComposition(handover.Status, hasDispatch))
+            {
+                return ServiceResult.Fail(ServiceErrorCode.HandoverCompositionLocked, "Este Handover já tem um envio registado; a composição não pode ser alterada.");
+            }
 
-        var equipment = await dbContext.Equipment.AsNoTracking().FirstAsync(e => e.Id == item.EquipmentId, cancellationToken);
+            var item = await dbContext.EquipmentHandoverItems.FirstOrDefaultAsync(i => i.Id == itemId && i.EquipmentHandoverId == handoverId, cancellationToken);
+            if (item is null)
+            {
+                return ServiceResult.Fail(ServiceErrorCode.NotFound, "Item not found.");
+            }
 
-        var photoKeys = await (
-            from p in dbContext.DeliveryInspectionPhotos.AsNoTracking()
-            join i in dbContext.DeliveryInspections.AsNoTracking() on p.DeliveryInspectionId equals i.Id
-            where i.EquipmentHandoverItemId == itemId
-            select p.StorageKey).ToListAsync(cancellationToken);
+            var equipment = await dbContext.Equipment.AsNoTracking().FirstAsync(e => e.Id == item.EquipmentId, cancellationToken);
 
-        // Removing the item cascades to its inspection and photo rows at the
-        // database level (see ApplicationDbContext) — only the storage objects
-        // need explicit best-effort cleanup here.
-        dbContext.EquipmentHandoverItems.Remove(item);
+            photoKeys = await (
+                from p in dbContext.DeliveryInspectionPhotos.AsNoTracking()
+                join i in dbContext.DeliveryInspections.AsNoTracking() on p.DeliveryInspectionId equals i.Id
+                where i.EquipmentHandoverItemId == itemId
+                select p.StorageKey).ToListAsync(cancellationToken);
 
-        await using (var transaction = await dbContext.Database.BeginTransactionIfNoneAsync(cancellationToken))
-        {
+            // Removing the item cascades to its inspection and photo rows at the
+            // database level (see ApplicationDbContext) — only the storage objects
+            // need explicit best-effort cleanup here.
+            dbContext.EquipmentHandoverItems.Remove(item);
+            handover.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
             await dbContext.SaveChangesAsync(cancellationToken);
 
             await auditService.RecordAsync(new AuditEntry(
@@ -384,7 +422,12 @@ public sealed class EquipmentHandoverService(
                 ActorUserId: actorUserId,
                 ActorDisplayNameSnapshot: actorDisplayName,
                 NewValues: new { equipment.AssetTag }), cancellationToken);
-            await transaction.CommitIfOwnedAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (PostgresConflictClassifier.IsSerializationFailure(ex))
+        {
+            dbContext.ChangeTracker.Clear();
+            return ServiceResult.Fail(ServiceErrorCode.Concurrency, HandoverComposition.ConflictMessage);
         }
 
         // Only once the removal is committed — never inside the transaction.
@@ -865,6 +908,16 @@ public sealed class EquipmentHandoverService(
         // equipment item as Available (docs/PROJECT_SPEC.md, invariant #1) —
         // the same pattern used for allocation creation in Phase 2.
         await using var transaction = await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+        // The items above were read before this transaction. An item added or
+        // removed in between (committed before this snapshot) is seen here and
+        // refused, so custody is never created for equipment that is no longer
+        // part of the Handover, nor a part of it left behind; one committing
+        // after this snapshot conflicts on the Handover row written below.
+        if (await HandoverComposition.HasChangedAsync(dbContext, handoverId, items.Select(i => i.Id), cancellationToken))
+        {
+            return ServiceResult.Fail<EquipmentHandoverDetailRecord>(ServiceErrorCode.Concurrency, HandoverComposition.ConflictMessage);
+        }
 
         // The status checks above ran before this transaction. A carrier
         // dispatch creates no Assignment, so the unique index alone cannot

@@ -692,66 +692,88 @@ public sealed class EquipmentService(
     public async Task<ServiceResult<EquipmentRecord>> RetireAsync(
         Guid id, Guid actorUserId, string actorDisplayName, CancellationToken cancellationToken = default)
     {
-        var equipment = await dbContext.Equipment.FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
-        if (equipment is null)
+        Equipment? equipment;
+
+        // The eligibility read and the write share one Serializable snapshot:
+        // Equipment has no concurrency token, so a status read before the
+        // transaction (or under Read Committed) would let this UPDATE silently
+        // overwrite a dispatch or Confirmar entrega that committed in between
+        // (an InTransit/Assigned item becoming Retired). Here such a commit is
+        // either seen (not eligible) or makes the write fail with a
+        // serialization conflict. Joins ApproveAsync's transaction (already
+        // Serializable) when called from there; that owner then translates the
+        // conflict at its own boundary.
+        await using (var transaction = await dbContext.Database.BeginTransactionIfNoneAsync(System.Data.IsolationLevel.Serializable, cancellationToken))
         {
-            return ServiceResult.Fail<EquipmentRecord>(ServiceErrorCode.NotFound, "Equipment not found.");
+            try
+            {
+                equipment = await dbContext.Equipment.FirstOrDefaultAsync(e => e.Id == id, cancellationToken);
+                if (equipment is null)
+                {
+                    return ServiceResult.Fail<EquipmentRecord>(ServiceErrorCode.NotFound, "Equipment not found.");
+                }
+
+                if (!EquipmentLifecycleRules.CanRetire(equipment.Status))
+                {
+                    return ServiceResult.Fail<EquipmentRecord>(
+                        ServiceErrorCode.InvalidLifecycleTransition,
+                        $"Equipment in status '{equipment.Status}' cannot be retired.");
+                }
+
+                equipment.Status = EquipmentStatus.Retired;
+                equipment.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+
+                // Resolve any orphaned Pending retirement request(s) for this
+                // equipment as part of the SAME write — retired equipment must never
+                // retain an unresolved Pending request, regardless of whether
+                // retirement was triggered by Administration's direct action here or
+                // by EquipmentRetirementRequestService.ApproveAsync delegating into
+                // this exact method (see the Equipment Retirement Request workflow's
+                // invariant). At most one such row can exist (partial unique index),
+                // but this resolves every match rather than assuming that.
+                var pendingRequests = await dbContext.EquipmentRetirementRequests
+                    .Where(r => r.EquipmentId == id && r.Status == EquipmentRetirementRequestStatus.Pending)
+                    .ToListAsync(cancellationToken);
+                foreach (var pending in pendingRequests)
+                {
+                    pending.Status = EquipmentRetirementRequestStatus.Approved;
+                    pending.DecidedByUserId = actorUserId;
+                    pending.DecidedByDisplayNameSnapshot = actorDisplayName;
+                    pending.DecidedAtUtc = equipment.UpdatedAtUtc;
+                    pending.UpdatedAtUtc = equipment.UpdatedAtUtc;
+                }
+
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                await auditService.RecordAsync(new AuditEntry(
+                    AuditActions.Equipment.Retired,
+                    EntityType: "Equipment",
+                    EntityId: equipment.Id.ToString(),
+                    ActorUserId: actorUserId,
+                    ActorDisplayNameSnapshot: actorDisplayName,
+                    NewValues: new { equipment.AssetTag }), cancellationToken);
+
+                foreach (var pending in pendingRequests)
+                {
+                    await auditService.RecordAsync(new AuditEntry(
+                        AuditActions.EquipmentRetirementRequest.Approved,
+                        EntityType: "Equipment",
+                        EntityId: equipment.Id.ToString(),
+                        ActorUserId: actorUserId,
+                        ActorDisplayNameSnapshot: actorDisplayName,
+                        NewValues: new { equipment.AssetTag, RetirementRequestId = pending.Id }), cancellationToken);
+                }
+
+                await transaction.CommitIfOwnedAsync(cancellationToken);
+            }
+            catch (Exception ex) when (transaction is not null && PostgresConflictClassifier.IsSerializationFailure(ex))
+            {
+                // Only when this call owns the transaction; nothing was committed.
+                dbContext.ChangeTracker.Clear();
+                return ServiceResult.Fail<EquipmentRecord>(
+                    ServiceErrorCode.Concurrency, "Este equipamento foi alterado por outra operação. Atualize a página e tente novamente.");
+            }
         }
-
-        if (!EquipmentLifecycleRules.CanRetire(equipment.Status))
-        {
-            return ServiceResult.Fail<EquipmentRecord>(
-                ServiceErrorCode.InvalidLifecycleTransition,
-                $"Equipment in status '{equipment.Status}' cannot be retired.");
-        }
-
-        equipment.Status = EquipmentStatus.Retired;
-        equipment.UpdatedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-
-        // Resolve any orphaned Pending retirement request(s) for this
-        // equipment as part of the SAME write — retired equipment must never
-        // retain an unresolved Pending request, regardless of whether
-        // retirement was triggered by Administration's direct action here or
-        // by EquipmentRetirementRequestService.ApproveAsync delegating into
-        // this exact method (see the Equipment Retirement Request workflow's
-        // invariant). At most one such row can exist (partial unique index),
-        // but this resolves every match rather than assuming that.
-        var pendingRequests = await dbContext.EquipmentRetirementRequests
-            .Where(r => r.EquipmentId == id && r.Status == EquipmentRetirementRequestStatus.Pending)
-            .ToListAsync(cancellationToken);
-        foreach (var pending in pendingRequests)
-        {
-            pending.Status = EquipmentRetirementRequestStatus.Approved;
-            pending.DecidedByUserId = actorUserId;
-            pending.DecidedByDisplayNameSnapshot = actorDisplayName;
-            pending.DecidedAtUtc = equipment.UpdatedAtUtc;
-            pending.UpdatedAtUtc = equipment.UpdatedAtUtc;
-        }
-
-        // Joins ApproveAsync's transaction when called from there.
-        await using var transaction = await dbContext.Database.BeginTransactionIfNoneAsync(cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        await auditService.RecordAsync(new AuditEntry(
-            AuditActions.Equipment.Retired,
-            EntityType: "Equipment",
-            EntityId: equipment.Id.ToString(),
-            ActorUserId: actorUserId,
-            ActorDisplayNameSnapshot: actorDisplayName,
-            NewValues: new { equipment.AssetTag }), cancellationToken);
-
-        foreach (var pending in pendingRequests)
-        {
-            await auditService.RecordAsync(new AuditEntry(
-                AuditActions.EquipmentRetirementRequest.Approved,
-                EntityType: "Equipment",
-                EntityId: equipment.Id.ToString(),
-                ActorUserId: actorUserId,
-                ActorDisplayNameSnapshot: actorDisplayName,
-                NewValues: new { equipment.AssetTag, RetirementRequestId = pending.Id }), cancellationToken);
-        }
-
-        await transaction.CommitIfOwnedAsync(cancellationToken);
 
         var type = await dbContext.EquipmentTypes.AsNoTracking().FirstAsync(t => t.Id == equipment.EquipmentTypeId, cancellationToken);
         var spec = await dbContext.LaptopSpecifications.AsNoTracking().FirstOrDefaultAsync(s => s.EquipmentId == id, cancellationToken);

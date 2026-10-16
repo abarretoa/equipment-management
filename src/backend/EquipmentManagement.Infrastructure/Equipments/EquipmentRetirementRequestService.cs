@@ -191,16 +191,31 @@ public sealed partial class EquipmentRetirementRequestService(
                 ServiceErrorCode.RetirementRequestNotPending, "This retirement request has already been decided.");
         }
 
-        var retireResult = await equipmentService.RetireAsync(request.EquipmentId, actorUserId, actorDisplayName, cancellationToken);
-        if (!retireResult.Succeeded)
+        ServiceResult<EquipmentRecord> retireResult;
+        try
         {
-            // Nothing was written (RetireAsync fails before any SaveChanges),
-            // so the transaction is simply abandoned — the request stays
-            // exactly as it was, Pending, for Administration to review/reject.
-            return ServiceResult.Fail<EquipmentRetirementRequestRecord>(retireResult.ErrorCode, retireResult.ErrorMessage!);
-        }
+            retireResult = await equipmentService.RetireAsync(request.EquipmentId, actorUserId, actorDisplayName, cancellationToken);
+            if (!retireResult.Succeeded)
+            {
+                // Nothing was written (RetireAsync fails before any SaveChanges),
+                // so the transaction is simply abandoned — the request stays
+                // exactly as it was, Pending, for Administration to review/reject.
+                return ServiceResult.Fail<EquipmentRetirementRequestRecord>(retireResult.ErrorCode, retireResult.ErrorMessage!);
+            }
 
-        await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex) when (PostgresConflictClassifier.IsSerializationFailure(ex))
+        {
+            // This method owns the Serializable transaction RetireAsync joined,
+            // so a conflicting lifecycle change (e.g. a dispatch of the same
+            // item) committing first surfaces here — at RetireAsync's write or
+            // at this commit. Nothing was committed: the request stays Pending
+            // and the equipment keeps the other operation's status.
+            dbContext.ChangeTracker.Clear();
+            return ServiceResult.Fail<EquipmentRetirementRequestRecord>(
+                ServiceErrorCode.Concurrency, "Este equipamento foi alterado por outra operação. Atualize a página e tente novamente.");
+        }
 
         // RetireAsync's own write already set this request's Status/Decided*
         // fields (loaded on the same tracked DbContext) — reload the entity's
